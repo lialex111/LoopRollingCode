@@ -6,7 +6,7 @@
 ### e.g., ./run.sh compress compress.in or ./run.sh simple or ./run.sh wc cccp.c
 ### Note: Do NOT inlude inputs/ in ${input}, `./run.sh compress inputs/compress.in` will provide different results
 
-PATH_MYPASS=~/LoopRollingCode/HW1_template/hw1pass/LLVMHW1.so ### Action Required: Specify the path to your pass ###
+PATH_MYPASS=~/LoopRollingCode/build/HW1_template/hw1pass/LLVMHW1.so ### Action Required: Specify the path to your pass ###
 NAME_MYPASS=-hw1 ### Action Required: Specify the name for your pass ###
 BENCH=src/${1}.c
 INPUT=${2}
