@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC  -Wl,-rpath-link,  -Wl,--gc-sections -shared  -o LLVMHW1.so CMakeFiles/LLVMHW1.dir/hw1pass.cpp.o  -Wl,-rpath,"\$ORIGIN/../lib:/usr/local/llvm/lib" 
