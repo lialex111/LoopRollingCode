@@ -13,7 +13,6 @@
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Support/Format.h"
-#include <cstdint>
 #include <map>
 #include <vector>
 #include <unordered_map>
@@ -34,32 +33,10 @@ namespace{
         }
     };
 
-    enum NodeType {
-        INSTRUCTION,
-        CONSTANT,
-        OTHER
-    };
-
-    enum NodeFlag {
-        NONE,
-        MONOTONIC_CONSTANTS
-    };
-
-    struct MonotonicInfo {
-        int64_t start;
-        int64_t end;
-        int64_t increment;
-    };
-
     struct Node {
         std::vector<Value*> values;
         std::vector<Node> edges;
         bool is_match;
-        NodeType type;
-        NodeFlag flag;
-
-        // extra info (may not always exist, check NodeFlag before accessing)
-        MonotonicInfo monotonicInfo;
     };
 
 	struct HW1: public FunctionPass {
@@ -72,22 +49,8 @@ namespace{
             AU.addRequired<BranchProbabilityInfoWrapperPass>();  // Analysis pass to load branch probability
         }
 
-        bool check_monotonic(std::vector<Value*> &group) {
-            std::vector<int64_t> int_vals;
-            for (Value *C: group) {
-                ConstantInt *ci = (ConstantInt*) C;
-                int_vals.push_back(ci->getLimitedValue());
-            }
-            int64_t diff = int_vals[1] - int_vals[0];
-            for (int k = 1; k < group.size() - 1; ++k) {
-                if (int_vals[k + 1] - int_vals[k] != diff) return false; 
-            }
-            return true;
-        }
-
         bool check_equivalence(std::vector<Value*> &group) {
             if (group.empty()) return false;
-            if (group.size() < 2) return true;
 
             bool is_instruction = true;
             bool is_constant = true;
@@ -123,10 +86,6 @@ namespace{
                 }
                 return true;
             } else if (is_constant) {
-                if (isa<ConstantInt>(group[0])) {
-                    if (check_monotonic(group)) return true;
-                }
-
                 Value* val = group[0];
                 for (Value* C: group) {
                     if (C != val) return false;
@@ -153,11 +112,8 @@ namespace{
             Node n = Node();
             n.values = group;
             n.is_match = true;
-            n.flag = NodeFlag::NONE;
 
             if (isa<Instruction>(group[0])) {
-                n.type = NodeType::INSTRUCTION;
-
                 // errs () << *((Instruction*) group[0]) << "\n";
                 for (int i = 0; i < ((Instruction*) group[0])->getNumOperands(); ++i) {
                     std::vector<Value*> operandGroup;
@@ -175,31 +131,6 @@ namespace{
                         n.edges.push_back(e);
                     }
                 }
-            } else if (isa<Constant>(group[0])) {
-                n.type = NodeType::CONSTANT;
-            } else {
-                n.type = NodeType::OTHER;
-            }
-
-            return n;
-        }
-
-        Node insert_monotonic_info(Node n) {
-            if (n.type == NodeType::CONSTANT && isa<ConstantInt>(n.values[0])) {
-                if (n.values.size() >= 2 && check_monotonic(n.values)) {
-                    n.flag = NodeFlag::MONOTONIC_CONSTANTS;
-                    std::vector<int64_t> int_vals;
-                    for (Value *C: n.values) {
-                        ConstantInt *ci = (ConstantInt*) C;
-                        int_vals.push_back(ci->getLimitedValue());
-                    }
-                    int64_t diff = int_vals[1] - int_vals[0];
-                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff};
-                }
-            }
-
-            for (int i = 0; i < n.edges.size(); ++i) {
-                n.edges[i] = insert_monotonic_info(n.edges[i]);
             }
 
             return n;
@@ -210,10 +141,6 @@ namespace{
                  errs() << "level: " << level << ", mismatch\n";
             } else {
                 errs() << "START GROUP\n";
-                if (n.flag == NodeFlag::MONOTONIC_CONSTANTS) {
-                    errs() << "[SEQUENCE] start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
-                }
-
                 for (auto &val: n.values) {
                     errs() << "level: " << level << ", match" << ", val:" << *val << "\n";
                 }
@@ -222,26 +149,6 @@ namespace{
                     print_graph(edge, level + 1);
                 }
             }
-        }
-
-        bool canRoll(Node &node) {
-            if (node.flag == NodeFlag::MONOTONIC_CONSTANTS && node.monotonicInfo.start != node.monotonicInfo.end) {
-                return true;
-            }
-            for (auto edge: node.edges) {
-                if (canRoll(edge)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        std::vector<BasicBlock> generateLoop(Function &F, Node &graph) {
-            errs() << "HI\n";
-
-            
-
-            return std::vector<BasicBlock>();
         }
 
 		virtual bool runOnFunction(Function &F) override{
@@ -254,7 +161,7 @@ namespace{
                     if (opCode == Instruction::Store) {
                         storeMap[{ L->getOperand(0), L->getType()->getTypeID()}].push_back(&(*L));
                     } else if (opCode == Instruction::Call) {
-                        functionMap[L->getOperand(1)].push_back(&(*L));
+                        functionMap[L->getOperand(0)].push_back(&(*L));
                     }
                 }
                 // errs()<<"store size: " << storeMap.size() << "\n";
@@ -270,19 +177,9 @@ namespace{
                     graphs.push_back(create_alignment_graph(item.second));
                 }
 
-                for (int j = 0; j < graphs.size(); ++j) {
-                    graphs[j] = insert_monotonic_info(graphs[j]);
-                }
-                
                 for (auto graph: graphs) {
                     print_graph(graph, 0);
                     errs() << "\n\n\n";
-                }
-
-                for (Node graph: graphs) {
-                    if (canRoll(graph)) {
-                        generateLoop(F, graph);
-                    }
                 }
             }
 			return false; // template code is just return false
