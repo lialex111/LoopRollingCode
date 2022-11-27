@@ -33,10 +33,32 @@ namespace{
         }
     };
 
+    enum NodeType {
+        INSTRUCTION,
+        CONSTANT,
+        OTHER
+    };
+
+    enum NodeFlag {
+        NONE,
+        MONOTONIC_CONSTANTS
+    };
+
+    struct MonotonicInfo {
+        uint64_t start;
+        uint64_t end;
+        uint64_t increment;
+    };
+
     struct Node {
         std::vector<Value*> values;
         std::vector<Node> edges;
         bool is_match;
+        NodeType type;
+        NodeFlag flag;
+
+        // extra info (may not always exist, check NodeFlag before accessing)
+        MonotonicInfo monotonicInfo;
     };
 
 	struct HW1: public FunctionPass {
@@ -47,6 +69,20 @@ namespace{
         void getAnalysisUsage(AnalysisUsage &AU) const{
             AU.addRequired<BlockFrequencyInfoWrapperPass>(); // Analysis pass to load block execution count
             AU.addRequired<BranchProbabilityInfoWrapperPass>();  // Analysis pass to load branch probability
+        }
+
+        bool check_monotonic(std::vector<Value*> &group) {
+            std::vector<uint64_t> int_vals;
+            for (Value *C: group) {
+                ConstantInt *ci = (ConstantInt*) C;
+                int_vals.push_back(ci->getLimitedValue());
+            }
+            std::sort(int_vals.begin(), int_vals.end());
+            uint64_t diff = int_vals[1] - int_vals[0];
+            for (int k = 1; k < group.size() - 1; ++k) {
+                if (int_vals[k + 1] - int_vals[k] != diff) return false; 
+            }
+            return true;
         }
 
         bool check_equivalence(std::vector<Value*> &group) {
@@ -88,25 +124,15 @@ namespace{
                 return true;
             } else if (is_constant) {
                 if (isa<ConstantInt>(group[0])) {
-                    std::vector<uint64_t> int_vals;
-                    for (Value *C: group) {
-                        ConstantInt *ci = (ConstantInt*) group[0];
-                        int_vals.push_back(ci->getLimitedValue());
-                    }
-                    std::sort(int_vals.begin(), int_vals.end());
-                    uint64_t diff = int_vals[1] - int_vals[0];
-                    for (int k = 1; k < group.size() - 1; ++k) {
-                        if (int_vals[k + 1] - int_vals[k] != diff) return false; 
-                    }
-                    return true;
-                } else {
-                    Value* val = group[0];
-                    for (Value* C: group) {
-                        if (C != val) return false;
-                    }
-
-                    return true;
+                    if (check_monotonic(group)) return true;
                 }
+
+                Value* val = group[0];
+                for (Value* C: group) {
+                    if (C != val) return false;
+                }
+
+                return true;
                 // if (isa<ConstantInt>(group[0])) {
                 //     APInt int_val = (static_cast<ConstantInt *>(group[0]))->getValue();
                 //     for (auto C: group) {
@@ -127,8 +153,11 @@ namespace{
             Node n = Node();
             n.values = group;
             n.is_match = true;
+            n.flag = NodeFlag::NONE;
 
             if (isa<Instruction>(group[0])) {
+                n.type = NodeType::INSTRUCTION;
+
                 // errs () << *((Instruction*) group[0]) << "\n";
                 for (int i = 0; i < ((Instruction*) group[0])->getNumOperands(); ++i) {
                     std::vector<Value*> operandGroup;
@@ -146,6 +175,32 @@ namespace{
                         n.edges.push_back(e);
                     }
                 }
+            } else if (isa<Constant>(group[0])) {
+                n.type = NodeType::CONSTANT;
+            } else {
+                n.type = NodeType::OTHER;
+            }
+
+            return n;
+        }
+
+        Node insert_monotonic_info(Node n) {
+            if (n.type == NodeType::CONSTANT && isa<ConstantInt>(n.values[0])) {
+                if (check_monotonic(n.values)) {
+                    n.flag = NodeFlag::MONOTONIC_CONSTANTS;
+                    std::vector<uint64_t> int_vals;
+                    for (Value *C: n.values) {
+                        ConstantInt *ci = (ConstantInt*) C;
+                        int_vals.push_back(ci->getLimitedValue());
+                    }
+                    
+                    uint64_t diff = int_vals[1] - int_vals[0];
+                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff};
+                }
+            }
+
+            for (int i = 0; i < n.edges.size(); ++i) {
+                n.edges[i] = insert_monotonic_info(n.edges[i]);
             }
 
             return n;
@@ -156,6 +211,10 @@ namespace{
                  errs() << "level: " << level << ", mismatch\n";
             } else {
                 errs() << "START GROUP\n";
+                if (n.flag == NodeFlag::MONOTONIC_CONSTANTS) {
+                    errs() << "[SEQUENCE] start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
+                }
+
                 for (auto &val: n.values) {
                     errs() << "level: " << level << ", match" << ", val:" << *val << "\n";
                 }
@@ -192,6 +251,10 @@ namespace{
                     graphs.push_back(create_alignment_graph(item.second));
                 }
 
+                for (int j = 0; j < graphs.size(); ++j) {
+                    graphs[j] = insert_monotonic_info(graphs[j]);
+                }
+                
                 for (auto graph: graphs) {
                     print_graph(graph, 0);
                     errs() << "\n\n\n";
