@@ -1,5 +1,5 @@
 int test_func(int x) {
-    return 1;
+    return x;
 }
 
 int main() {
@@ -8,3 +8,12 @@ int main() {
     test_func(arr[2]);
     test_func(arr[4]);
 }
+
+/*
+instrNode
+
+instr* inst                             -> ex: %call = call i32 @test_func(i32 noundef %1)
+vector<something>                       -> {start, end}           -> ex: {arr[0], arr[4]} or {boxPtr->height, boxPtr->id}
+int increment                           -> 2 or -1
+
+*/
