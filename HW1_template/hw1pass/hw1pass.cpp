@@ -225,6 +225,24 @@ namespace{
             }
         }
 
+        bool canRoll(Node &node) {
+            if (n.flag == NodeFlag::MONOTONIC_CONSTANTS && n.monotonicInfo.start != n.monotonicInfo.end) {
+                return true;
+            }
+            for (auto edge: n.edges) {
+                if (canRoll(edge)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        std::vector<BasicBlock> generateLoop(Function &F, std::vector<Node> &graph) {
+            cout << "HI" << endl;
+
+            return std::vector<BasicBlock>();
+        }
+
 		virtual bool runOnFunction(Function &F) override{
             /* *******Implementation of Your code ******* */
             for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
@@ -258,6 +276,12 @@ namespace{
                 for (auto graph: graphs) {
                     print_graph(graph, 0);
                     errs() << "\n\n\n";
+                }
+
+                for (auto graph: graphs) {
+                    if (canRoll()) {
+                        generateLoop(F, graph);
+                    }
                 }
             }
 			return false; // template code is just return false
