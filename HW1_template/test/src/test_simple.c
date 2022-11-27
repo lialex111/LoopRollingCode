@@ -3,7 +3,7 @@ int test_func(int x) {
 }
 
 int main() {
-    test_func(0);
-    test_func(1);
+    test_func(3);
     test_func(2);
+    test_func(1);
 }

@@ -46,9 +46,9 @@ namespace{
     };
 
     struct MonotonicInfo {
-        uint64_t start;
-        uint64_t end;
-        uint64_t increment;
+        int64_t start;
+        int64_t end;
+        int64_t increment;
     };
 
     struct Node {
@@ -73,13 +73,12 @@ namespace{
         }
 
         bool check_monotonic(std::vector<Value*> &group) {
-            std::vector<uint64_t> int_vals;
+            std::vector<int64_t> int_vals;
             for (Value *C: group) {
                 ConstantInt *ci = (ConstantInt*) C;
                 int_vals.push_back(ci->getLimitedValue());
             }
-            std::sort(int_vals.begin(), int_vals.end());
-            uint64_t diff = int_vals[1] - int_vals[0];
+            int64_t diff = int_vals[1] - int_vals[0];
             for (int k = 1; k < group.size() - 1; ++k) {
                 if (int_vals[k + 1] - int_vals[k] != diff) return false; 
             }
@@ -189,13 +188,12 @@ namespace{
             if (n.type == NodeType::CONSTANT && isa<ConstantInt>(n.values[0])) {
                 if (n.values.size() >= 2 && check_monotonic(n.values)) {
                     n.flag = NodeFlag::MONOTONIC_CONSTANTS;
-                    std::vector<uint64_t> int_vals;
+                    std::vector<int64_t> int_vals;
                     for (Value *C: n.values) {
                         ConstantInt *ci = (ConstantInt*) C;
                         int_vals.push_back(ci->getLimitedValue());
                     }
-                    std::sort(int_vals.begin(), int_vals.end());
-                    uint64_t diff = int_vals[1] - int_vals[0];
+                    int64_t diff = int_vals[1] - int_vals[0];
                     n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff};
                 }
             }
