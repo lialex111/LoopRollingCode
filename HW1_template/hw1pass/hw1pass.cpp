@@ -227,10 +227,10 @@ namespace{
         }
 
         bool canRoll(Node &node) {
-            if (n.flag == NodeFlag::MONOTONIC_CONSTANTS && n.monotonicInfo.start != n.monotonicInfo.end) {
+            if (node.flag == NodeFlag::MONOTONIC_CONSTANTS && node.monotonicInfo.start != node.monotonicInfo.end) {
                 return true;
             }
-            for (auto edge: n.edges) {
+            for (auto edge: node.edges) {
                 if (canRoll(edge)) {
                     return true;
                 }
@@ -238,8 +238,10 @@ namespace{
             return false;
         }
 
-        std::vector<BasicBlock> generateLoop(Function &F, std::vector<Node> &graph) {
-            cout << "HI" << endl;
+        std::vector<BasicBlock> generateLoop(Function &F, Node &graph) {
+            errs() << "HI\n";
+
+            
 
             return std::vector<BasicBlock>();
         }
@@ -279,8 +281,8 @@ namespace{
                     errs() << "\n\n\n";
                 }
 
-                for (auto graph: graphs) {
-                    if (canRoll()) {
+                for (Node graph: graphs) {
+                    if (canRoll(graph)) {
                         generateLoop(F, graph);
                     }
                 }
