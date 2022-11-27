@@ -6,7 +6,7 @@
 ### e.g., ./run.sh compress compress.in or ./run.sh simple or ./run.sh wc cccp.c
 ### Note: Do NOT inlude inputs/ in ${input}, `./run.sh compress inputs/compress.in` will provide different results
 
-PATH_MYPASS=~/LoopRollingCode/build/HW1_template/hw1pass/LLVMHW1.so ### Action Required: Specify the path to your pass ###
+PATH_MYPASS=~/HW1/build/hw1pass/LLVMHW1.so ### Action Required: Specify the path to your pass ###
 NAME_MYPASS=-hw1 ### Action Required: Specify the name for your pass ###
 BENCH=src/${1}.c
 INPUT=${2}
@@ -48,11 +48,4 @@ llvm-profdata merge -output=pgo.profdata default.profraw
 # Prepare input to run
 setup
 # Apply your pass to bitcode (IR)
-# opt -enable-new-pm=0 -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
-
-# opt -enable-new-pm=0 -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
-
-opt -enable-new-pm=0 -o ${1}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
-
-clang ${1}.fplicm.bc -o ${1}_fplicm
-./${1}_fplicm > fplicm_output
+opt -enable-new-pm=0 -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
