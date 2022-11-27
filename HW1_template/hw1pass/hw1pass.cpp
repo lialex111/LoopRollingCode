@@ -51,6 +51,7 @@ namespace{
 
         bool check_equivalence(std::vector<Value*> &group) {
             if (group.empty()) return false;
+            if (group.size() < 2) return true;
 
             bool is_instruction = true;
             bool is_constant = true;
@@ -86,12 +87,26 @@ namespace{
                 }
                 return true;
             } else if (is_constant) {
-                Value* val = group[0];
-                for (Value* C: group) {
-                    if (C != val) return false;
-                }
+                if (isa<ConstantInt>(group[0])) {
+                    std::vector<uint64_t> int_vals;
+                    for (Value *C: group) {
+                        ConstantInt *ci = (ConstantInt*) group[0];
+                        int_vals.push_back(ci->getLimitedValue());
+                    }
+                    std::sort(int_vals.begin(), int_vals.end());
+                    uint64_t diff = int_vals[1] - int_vals[0];
+                    for (int k = 1; k < group.size() - 1; ++k) {
+                        if (int_vals[k + 1] - int_vals[k] != diff) return false; 
+                    }
+                    return true;
+                } else {
+                    Value* val = group[0];
+                    for (Value* C: group) {
+                        if (C != val) return false;
+                    }
 
-                return true;
+                    return true;
+                }
                 // if (isa<ConstantInt>(group[0])) {
                 //     APInt int_val = (static_cast<ConstantInt *>(group[0]))->getValue();
                 //     for (auto C: group) {
@@ -161,7 +176,7 @@ namespace{
                     if (opCode == Instruction::Store) {
                         storeMap[{ L->getOperand(0), L->getType()->getTypeID()}].push_back(&(*L));
                     } else if (opCode == Instruction::Call) {
-                        functionMap[L->getOperand(0)].push_back(&(*L));
+                        functionMap[L->getOperand(1)].push_back(&(*L));
                     }
                 }
                 // errs()<<"store size: " << storeMap.size() << "\n";
