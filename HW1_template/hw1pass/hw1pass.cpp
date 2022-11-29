@@ -7,12 +7,15 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Use.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -20,6 +23,7 @@
 
 using namespace llvm;
 namespace{
+
     struct hash_pair {
         size_t operator()(const std::pair<Value*, Type::TypeID>& p) const
         {
@@ -236,16 +240,102 @@ namespace{
             return false;
         }
 
-        std::vector<BasicBlock> generateLoop(Function &F, Node &graph) {
-            errs() << "HI\n";
+        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono) {
+            if (level > maxDepth[0] && maxDepth[0] >= 0) {
+                maxDepth[0] = level;
+            } 
+
+            if (curNode.flag == NodeFlag::MONOTONIC_CONSTANTS && curNode.monotonicInfo.start != curNode.monotonicInfo.end) {
+                mono.push_back(curNode.monotonicInfo.start);
+                mono.push_back(curNode.monotonicInfo.end);
+                mono.push_back(curNode.monotonicInfo.increment);
+            }
 
             
 
-            return std::vector<BasicBlock>();
+            for (auto node : curNode.edges) {
+                dfsGraph(node, level + 1, maxDepth, values, mono);
+            }
+
+            if (maxDepth[0] >= 0 && level == maxDepth[0] -1) {
+                values.push_back(curNode.values[0]);
+                maxDepth[0] = -1;
+            }
+
+            if (level == 2) {
+                values.push_back(curNode.values[0]);
+            }
+            
+        }
+
+        void eraseDfs(int level, Node& node) {
+
+            for (auto val : node.values) {
+                dyn_cast<Instruction>(val)->eraseFromParent();
+            }
+
+            if (level != 2) {
+                eraseDfs(level + 1, node.edges[0]);
+            }
+        }
+        
+        void erasePrevInstructions(Node &graph) {
+            eraseDfs(0, graph);
+        }
+
+        void generateLoop(Function &F, Node &graph) {
+            errs() << "HI\n";
+
+            LLVMContext* context = &F.getContext();
+            IRBuilder<> builder(*context);
+            Instruction* firstInstr = dyn_cast<Instruction>(graph.values[0]);
+            BasicBlock* first = firstInstr->getParent();
+            std::vector<int64_t> mono;
+            std::vector<Value*> values; // [basePtr, ]
+            std::vector<int> maxDepth = {0};
+
+            dfsGraph(graph, 0, maxDepth, values, mono);
+
+            BasicBlock* preHeader = SplitBlock(firstInstr->getParent(), firstInstr);
+            BasicBlock* loopBody = SplitBlock(firstInstr->getParent(), firstInstr);
+            BasicBlock* endLoop = SplitBlock(firstInstr->getParent(), firstInstr);
+            BasicBlock* last = SplitBlock(firstInstr->getParent(), firstInstr);
+
+            builder.SetInsertPoint(preHeader->getTerminator());
+            Value* stepVal = ConstantInt::get(*context, APInt(64, mono[0]));
+            AllocaInst* stepAlloca = builder.CreateAlloca(stepVal->getType(), stepVal);
+            LoadInst* stepVar = builder.CreateLoad(Type::getInt64Ty(*context), stepAlloca, "stepVar");
+
+            builder.SetInsertPoint(loopBody->getTerminator());
+            PHINode* phi = builder.CreatePHI(stepVar->getType(), 2, "i");
+            phi->addIncoming(stepVar, preHeader);
+            GetElementPtrInst* elemPtr = dyn_cast<GetElementPtrInst>(dyn_cast<Instruction>(values[1])->clone());
+            elemPtr->setOperand(2, phi);
+            elemPtr->insertBefore(loopBody->getTerminator());
+            LoadInst* elemVal = builder.CreateLoad(Type::getInt32Ty(*context), elemPtr, "elemVal");
+            CallInst* call = dyn_cast<CallInst>(firstInstr->clone());
+            call->setOperand(0, elemVal);
+            call->insertBefore(loopBody->getTerminator());
+
+            builder.SetInsertPoint(endLoop->getTerminator());
+            Value* incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            Value* cond;
+            if (mono[2] > 0) {
+                cond = builder.CreateICmpSLE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+            } else {
+                cond = builder.CreateICmpSGE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+            }
+            builder.CreateCondBr(cond, loopBody, last);
+            endLoop->getTerminator()->eraseFromParent();
+            phi->addIncoming(incr, endLoop);
+            
+            erasePrevInstructions(graph);
         }
 
 		virtual bool runOnFunction(Function &F) override{
             /* *******Implementation of Your code ******* */
+            std::vector<Node> graphs;
+
             for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
                 std::unordered_map<std::pair<Value*, Type::TypeID>, std::vector<Value*>, hash_pair> storeMap;
                 std::unordered_map<Value*, std::vector<Value*>> functionMap;
@@ -260,7 +350,7 @@ namespace{
                 // errs()<<"store size: " << storeMap.size() << "\n";
                 // errs()<<"func size: " << storeMap.size() << "\n";
 
-                std::vector<Node> graphs;
+                
 
                 for (auto item: storeMap) {
                     graphs.push_back(create_alignment_graph(item.second));
@@ -274,17 +364,34 @@ namespace{
                     graphs[j] = insert_monotonic_info(graphs[j]);
                 }
                 
-                for (auto graph: graphs) {
-                    print_graph(graph, 0);
-                    errs() << "\n\n\n";
+            }
+
+            errs() << "Original Code" << '\n';
+            for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
+                for (BasicBlock::iterator i = bb->begin(), e = bb->end(); i != e; ++i) {
+                    errs() << *i << '\n';
+                }
+                errs() << ' ' << '\n';
+            }
+
+            errs() << "\n\n\n";
+
+            for (Node graph: graphs) {
+
+                if (canRoll(graph)) {
+                    generateLoop(F, graph);
                 }
 
-                for (Node graph: graphs) {
-                    if (canRoll(graph)) {
-                        generateLoop(F, graph);
-                    }
-                }
             }
+
+            errs() << "Altered Code" << '\n';
+            for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
+                for (BasicBlock::iterator i = bb->begin(), e = bb->end(); i != e; ++i) {
+                    errs() << *i << '\n';
+                }
+                errs() << ' ' << '\n';
+            }
+
 			return false; // template code is just return false
 		}
 	};
