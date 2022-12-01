@@ -2,8 +2,10 @@
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Use.h"
 #include "llvm/IR/Value.h"
@@ -49,10 +51,16 @@ namespace{
         MONOTONIC_CONSTANTS
     };
 
+    enum MonotonicOp {
+        ADD,
+        MUL
+    };
+
     struct MonotonicInfo {
         int64_t start;
         int64_t end;
         int64_t increment;
+        MonotonicOp monotonic_op;
     };
 
     struct Node {
@@ -198,7 +206,7 @@ namespace{
                         int_vals.push_back(ci->getLimitedValue());
                     }
                     int64_t diff = int_vals[1] - int_vals[0];
-                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff};
+                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::ADD};
                 }
             }
 
