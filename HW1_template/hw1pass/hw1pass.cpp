@@ -284,7 +284,6 @@ namespace{
         }
 
         void generateLoop(Function &F, Node &graph) {
-            errs() << "HI\n";
 
             LLVMContext* context = &F.getContext();
             IRBuilder<> builder(*context);
