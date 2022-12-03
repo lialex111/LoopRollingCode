@@ -97,6 +97,26 @@ namespace{
             return true;
         }
 
+        bool check_monotonic_mul(std::vector<Value*> &group) {
+            std::vector<int64_t> int_vals;
+            for (Value *C: group) {
+                ConstantInt *ci = (ConstantInt*) C;
+                int_vals.push_back(ci->getLimitedValue());
+            }
+
+            if (int_vals[0] == 0) return false;  // exit, cannot start from 0
+            if (int_vals[1] % int_vals[0] != 0) return false;
+            int64_t diff = int_vals[1] / int_vals[0];
+            if (diff == 1) return false;  // trivial case, not considered multiplication
+
+            for (int k = 1; k < group.size() - 1; ++k) {
+                if (int_vals[k] == 0) return false;  // exit, cannot start from 0
+                if (int_vals[k + 1] % int_vals[k] != 0) return false;
+                if (int_vals[k + 1] / int_vals[k] != diff) return false; 
+            }
+            return true;
+        }
+
         bool check_equivalence(std::vector<Value*> &group) {
             if (group.empty()) return false;
             if (group.size() < 2) return true;
@@ -137,6 +157,7 @@ namespace{
             } else if (is_constant) {
                 if (isa<ConstantInt>(group[0])) {
                     if (check_monotonic(group)) return true;
+                    if (check_monotonic_mul(group)) return true;
                 }
 
                 Value* val = group[0];
@@ -198,15 +219,26 @@ namespace{
 
         Node insert_monotonic_info(Node n) {
             if (n.type == NodeType::CONSTANT && isa<ConstantInt>(n.values[0])) {
-                if (n.values.size() >= 2 && check_monotonic(n.values)) {
-                    n.flag = NodeFlag::MONOTONIC_CONSTANTS;
-                    std::vector<int64_t> int_vals;
-                    for (Value *C: n.values) {
-                        ConstantInt *ci = (ConstantInt*) C;
-                        int_vals.push_back(ci->getLimitedValue());
+                if (n.values.size() >= 2) {
+                    if (check_monotonic(n.values)) {
+                        n.flag = NodeFlag::MONOTONIC_CONSTANTS;
+                        std::vector<int64_t> int_vals;
+                        for (Value *C: n.values) {
+                            ConstantInt *ci = (ConstantInt*) C;
+                            int_vals.push_back(ci->getLimitedValue());
+                        }
+                        int64_t diff = int_vals[1] - int_vals[0];
+                        n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::ADD};
+                    } else if (check_monotonic_mul(n.values)) {
+                        n.flag = NodeFlag::MONOTONIC_CONSTANTS;
+                        std::vector<int64_t> int_vals;
+                        for (Value *C: n.values) {
+                            ConstantInt *ci = (ConstantInt*) C;
+                            int_vals.push_back(ci->getLimitedValue());
+                        }
+                        int64_t diff = int_vals[1] / int_vals[0];
+                        n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::MUL};
                     }
-                    int64_t diff = int_vals[1] - int_vals[0];
-                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::ADD};
                 }
             }
 
@@ -223,7 +255,9 @@ namespace{
             } else {
                 errs() << "START GROUP\n";
                 if (n.flag == NodeFlag::MONOTONIC_CONSTANTS) {
-                    errs() << "[SEQUENCE] start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
+                    if (n.monotonicInfo.monotonic_op == MonotonicOp::ADD) errs () << "[ADD SEQUENCE] ";
+                    if (n.monotonicInfo.monotonic_op == MonotonicOp::MUL) errs () << "[MUL SEQUENCE] ";
+                    errs() << "start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
                 }
 
                 for (auto &val: n.values) {
@@ -369,6 +403,10 @@ namespace{
 
                 for (int j = 0; j < graphs.size(); ++j) {
                     graphs[j] = insert_monotonic_info(graphs[j]);
+                }
+
+                for (auto g: graphs) {
+                    print_graph(g, 0);
                 }
                 
             }
