@@ -248,7 +248,7 @@ namespace{
             return false;
         }
 
-        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono) {
+        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono, std::vector<MonotonicOp>* monoOp) {
             if (level > maxDepth[0] && maxDepth[0] >= 0) {
                 maxDepth[0] = level;
             } 
@@ -257,12 +257,13 @@ namespace{
                 mono.push_back(curNode.monotonicInfo.start);
                 mono.push_back(curNode.monotonicInfo.end);
                 mono.push_back(curNode.monotonicInfo.increment);
+                monoOp.push_back(curNode.monotonicInfo.monotonic_op);
             }
 
             
 
             for (auto node : curNode.edges) {
-                dfsGraph(node, level + 1, maxDepth, values, mono);
+                dfsGraph(node, level + 1, maxDepth, values, mono, monoOp);
             }
 
             if (maxDepth[0] >= 0 && level == maxDepth[0] -1) {
@@ -300,8 +301,9 @@ namespace{
             std::vector<int64_t> mono;
             std::vector<Value*> values; // [basePtr, ]
             std::vector<int> maxDepth = {0};
+            std::vector<MonotonicOp> monoOp;
 
-            dfsGraph(graph, 0, maxDepth, values, mono);
+            dfsGraph(graph, 0, maxDepth, values, mono, monoOp);
 
             BasicBlock* preHeader = SplitBlock(firstInstr->getParent(), firstInstr);
             BasicBlock* loopBody = SplitBlock(firstInstr->getParent(), firstInstr);
@@ -325,7 +327,12 @@ namespace{
             call->insertBefore(loopBody->getTerminator());
 
             builder.SetInsertPoint(endLoop->getTerminator());
-            Value* incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            Value* incr;
+            if (monoOp[0] == MonotonicOp:ADD) {
+                incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            } else {
+                incr = builder.CreateMul(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            }
             Value* cond;
             if (mono[2] > 0) {
                 cond = builder.CreateICmpSLE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
