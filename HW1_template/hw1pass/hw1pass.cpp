@@ -282,7 +282,7 @@ namespace{
             return false;
         }
 
-        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono, std::vector<MonotonicOp>* monoOp) {
+        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono, std::vector<MonotonicOp>& monoOp) {
             if (level > maxDepth[0] && maxDepth[0] >= 0) {
                 maxDepth[0] = level;
             } 
@@ -362,16 +362,16 @@ namespace{
 
             builder.SetInsertPoint(endLoop->getTerminator());
             Value* incr;
-            if (monoOp[0] == MonotonicOp:ADD) {
+            if (monoOp[0] == MonotonicOp::ADD) {
                 incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
             } else {
                 incr = builder.CreateMul(phi, ConstantInt::get(*context, APInt(64, mono[2])));
             }
             Value* cond;
             if (mono[2] > 0) {
-                cond = builder.CreateICmpSLE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+                cond = builder.CreateICmpSLE(incr, ConstantInt::get(*context, APInt(64, mono[1])));
             } else {
-                cond = builder.CreateICmpSGE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+                cond = builder.CreateICmpSGE(incr, ConstantInt::get(*context, APInt(64, mono[1])));
             }
             builder.CreateCondBr(cond, loopBody, last);
             endLoop->getTerminator()->eraseFromParent();
@@ -412,9 +412,9 @@ namespace{
                     graphs[j] = insert_monotonic_info(graphs[j]);
                 }
 
-                for (auto g: graphs) {
-                    print_graph(g, 0);
-                }
+                // for (auto g: graphs) {
+                //     print_graph(g, 0);
+                // }
                 
             }
 
@@ -429,6 +429,7 @@ namespace{
             errs() << "\n\n\n";
 
             for (Node graph: graphs) {
+                //print_graph(graph, 0);
 
                 if (canRoll(graph)) {
                     generateLoop(F, graph);
