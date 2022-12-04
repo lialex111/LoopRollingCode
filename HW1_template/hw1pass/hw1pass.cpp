@@ -98,6 +98,26 @@ namespace{
             return true;
         }
 
+        bool check_monotonic_mul(std::vector<Value*> &group) {
+            std::vector<int64_t> int_vals;
+            for (Value *C: group) {
+                ConstantInt *ci = (ConstantInt*) C;
+                int_vals.push_back(ci->getLimitedValue());
+            }
+
+            if (int_vals[0] == 0) return false;  // exit, cannot start from 0
+            if (int_vals[1] % int_vals[0] != 0) return false;
+            int64_t diff = int_vals[1] / int_vals[0];
+            if (diff == 1) return false;  // trivial case, not considered multiplication
+
+            for (int k = 1; k < group.size() - 1; ++k) {
+                if (int_vals[k] == 0) return false;  // exit, cannot start from 0
+                if (int_vals[k + 1] % int_vals[k] != 0) return false;
+                if (int_vals[k + 1] / int_vals[k] != diff) return false; 
+            }
+            return true;
+        }
+
         bool check_equivalence(std::vector<Value*> &group) {
             if (group.empty()) return false;
             if (group.size() < 2) return true;
@@ -138,6 +158,7 @@ namespace{
             } else if (is_constant) {
                 if (isa<ConstantInt>(group[0])) {
                     if (check_monotonic(group)) return true;
+                    if (check_monotonic_mul(group)) return true;
                 }
 
                 Value* val = group[0];
@@ -199,15 +220,26 @@ namespace{
 
         Node insert_monotonic_info(Node n) {
             if (n.type == NodeType::CONSTANT && isa<ConstantInt>(n.values[0])) {
-                if (n.values.size() >= 2 && check_monotonic(n.values)) {
-                    n.flag = NodeFlag::MONOTONIC_CONSTANTS;
-                    std::vector<int64_t> int_vals;
-                    for (Value *C: n.values) {
-                        ConstantInt *ci = (ConstantInt*) C;
-                        int_vals.push_back(ci->getLimitedValue());
+                if (n.values.size() >= 2) {
+                    if (check_monotonic(n.values)) {
+                        n.flag = NodeFlag::MONOTONIC_CONSTANTS;
+                        std::vector<int64_t> int_vals;
+                        for (Value *C: n.values) {
+                            ConstantInt *ci = (ConstantInt*) C;
+                            int_vals.push_back(ci->getLimitedValue());
+                        }
+                        int64_t diff = int_vals[1] - int_vals[0];
+                        n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::ADD};
+                    } else if (check_monotonic_mul(n.values)) {
+                        n.flag = NodeFlag::MONOTONIC_CONSTANTS;
+                        std::vector<int64_t> int_vals;
+                        for (Value *C: n.values) {
+                            ConstantInt *ci = (ConstantInt*) C;
+                            int_vals.push_back(ci->getLimitedValue());
+                        }
+                        int64_t diff = int_vals[1] / int_vals[0];
+                        n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::MUL};
                     }
-                    int64_t diff = int_vals[1] - int_vals[0];
-                    n.monotonicInfo = {int_vals[0], int_vals[int_vals.size() - 1], diff, MonotonicOp::ADD};
                 }
             }
 
@@ -224,7 +256,9 @@ namespace{
             } else {
                 errs() << "START GROUP\n";
                 if (n.flag == NodeFlag::MONOTONIC_CONSTANTS) {
-                    errs() << "[SEQUENCE] start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
+                    if (n.monotonicInfo.monotonic_op == MonotonicOp::ADD) errs () << "[ADD SEQUENCE] ";
+                    if (n.monotonicInfo.monotonic_op == MonotonicOp::MUL) errs () << "[MUL SEQUENCE] ";
+                    errs() << "start: " << n.monotonicInfo.start << " end: " << n.monotonicInfo.end << " increment: " << n.monotonicInfo.increment << "\n";
                 }
 
                 for (auto &val: n.values) {
@@ -249,7 +283,7 @@ namespace{
             return false;
         }
 
-        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono) {
+        void dfsGraph(Node &curNode, int level, std::vector<int>& maxDepth,  std::vector<Value*> &values, std::vector<int64_t>& mono, std::vector<MonotonicOp>& monoOp) {
             if (level > maxDepth[0] && maxDepth[0] >= 0) {
                 maxDepth[0] = level;
             } 
@@ -258,12 +292,13 @@ namespace{
                 mono.push_back(curNode.monotonicInfo.start);
                 mono.push_back(curNode.monotonicInfo.end);
                 mono.push_back(curNode.monotonicInfo.increment);
+                monoOp.push_back(curNode.monotonicInfo.monotonic_op);
             }
 
             
 
             for (auto node : curNode.edges) {
-                dfsGraph(node, level + 1, maxDepth, values, mono);
+                dfsGraph(node, level + 1, maxDepth, values, mono, monoOp);
             }
 
             if (maxDepth[0] >= 0 && level == maxDepth[0] -1) {
@@ -301,8 +336,9 @@ namespace{
             std::vector<int64_t> mono;
             std::vector<Value*> values; // [basePtr, ]
             std::vector<int> maxDepth = {0};
+            std::vector<MonotonicOp> monoOp;
 
-            dfsGraph(graph, 0, maxDepth, values, mono);
+            dfsGraph(graph, 0, maxDepth, values, mono, monoOp);
 
             BasicBlock* preHeader = SplitBlock(firstInstr->getParent(), firstInstr);
             BasicBlock* loopBody = SplitBlock(firstInstr->getParent(), firstInstr);
@@ -331,12 +367,17 @@ namespace{
             call->insertBefore(loopBody->getTerminator());
 
             builder.SetInsertPoint(endLoop->getTerminator());
-            Value* incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            Value* incr;
+            if (monoOp[0] == MonotonicOp::ADD) {
+                incr = builder.CreateAdd(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            } else {
+                incr = builder.CreateMul(phi, ConstantInt::get(*context, APInt(64, mono[2])));
+            }
             Value* cond;
             if (mono[2] > 0) {
-                cond = builder.CreateICmpSLE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+                cond = builder.CreateICmpSLE(incr, ConstantInt::get(*context, APInt(64, mono[1])));
             } else {
-                cond = builder.CreateICmpSGE(phi, ConstantInt::get(*context, APInt(64, mono[1])));
+                cond = builder.CreateICmpSGE(incr, ConstantInt::get(*context, APInt(64, mono[1])));
             }
             builder.CreateCondBr(cond, loopBody, last);
             endLoop->getTerminator()->eraseFromParent();
@@ -447,6 +488,7 @@ namespace{
             errs() << "\n\n\n";
 
             for (Node graph: graphs) {
+                //print_graph(graph, 0);
 
                 if (canRoll(graph)) {
                     generateLoop(F, graph);
