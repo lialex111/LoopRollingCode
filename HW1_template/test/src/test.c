@@ -1,12 +1,11 @@
-int test_func(int x) {
-    return x;
-}
-
 int main() {
-    int arr[] = {12, 34, 56, 78, 90, 43, 66};
+    char arr[] = {'a','b','c','d','\0'};
 
-    test_func(arr[0]);
-    test_func(arr[2]);
-    test_func(arr[4]);
-    test_func(arr[6]);
+    putchar(arr[0]);
+    putchar(arr[1]);
+    for (int i = 2; i < 4; ++i) {
+        putchar(arr[i]);
+    }
+    // putchar(arr[2]);
+    // putchar(arr[3]);
 }

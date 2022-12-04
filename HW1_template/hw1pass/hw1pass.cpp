@@ -18,6 +18,7 @@
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+ #include "llvm-c/Core.h"
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -270,7 +271,7 @@ namespace{
                 maxDepth[0] = -1;
             }
 
-            if (level == 2) {
+            if (level == 3 || level == 1) {
                 values.push_back(curNode.values[0]);
             }
             
@@ -282,7 +283,7 @@ namespace{
                 dyn_cast<Instruction>(val)->eraseFromParent();
             }
 
-            if (level != 2) {
+            if (level != 3) {
                 eraseDfs(level + 1, node.edges[0]);
             }
         }
@@ -319,9 +320,14 @@ namespace{
             GetElementPtrInst* elemPtr = dyn_cast<GetElementPtrInst>(dyn_cast<Instruction>(values[1])->clone());
             elemPtr->setOperand(2, phi);
             elemPtr->insertBefore(loopBody->getTerminator());
-            LoadInst* elemVal = builder.CreateLoad(Type::getInt32Ty(*context), elemPtr, "elemVal");
+            LoadInst* elemVal = builder.CreateLoad(Type::getInt8Ty(*context), elemPtr, "elemVal");
+            errs() << *values[2] << '\n';
+            SExtInst* seVal = dyn_cast<SExtInst>(dyn_cast<Instruction>(values[2])->clone());
+            errs() << *seVal << '\n';
+            seVal->setOperand(0, elemVal);
+            seVal->insertBefore(loopBody->getTerminator());
             CallInst* call = dyn_cast<CallInst>(firstInstr->clone());
-            call->setOperand(0, elemVal);
+            call->setOperand(0, seVal);
             call->insertBefore(loopBody->getTerminator());
 
             builder.SetInsertPoint(endLoop->getTerminator());
@@ -343,6 +349,66 @@ namespace{
             /* *******Implementation of Your code ******* */
             std::vector<Node> graphs;
 
+            Instruction* temp;
+            bool isFirstBB = true;
+            Instruction* deleteBranchInstruction;
+            std::vector<Instruction*> deleteInstrs;
+            GetElementPtrInst* getElemPtrInst;
+            LoadInst* loadInst;
+            SExtInst* sextInst;
+            BasicBlock* deleteBB;
+            for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
+                for (auto L = bb->begin(); L != bb->end(); ++L) {
+                    if ((std::string)L->getOpcodeName() == "br") {
+                        deleteBranchInstruction = &*L;
+                    }
+
+                    if (isFirstBB) temp = &*L;
+                    else {
+                        if ((std::string)L->getOpcodeName() == "getelementptr") {
+                            getElemPtrInst = dyn_cast<GetElementPtrInst>(dyn_cast<Instruction>((&*L)->clone()));
+                            getElemPtrInst->insertAfter(temp);
+                            temp = getElemPtrInst;
+                        }
+                        else if ((std::string)L->getOpcodeName() == "load") {
+                            loadInst = dyn_cast<LoadInst>((&*L)->clone());
+                            loadInst->setOperand(0, getElemPtrInst);
+                            loadInst->insertAfter(temp);
+                            temp = loadInst;
+                        }
+                        else if ((std::string)L->getOpcodeName() == "sext") {
+                            sextInst = dyn_cast<SExtInst>((&*L)->clone());
+                            sextInst->setOperand(0, loadInst);
+                            sextInst->insertAfter(temp);
+                            temp = sextInst;
+                        }
+                        else if ((std::string)L->getOpcodeName() == "call") {
+                            CallInst* callInst = dyn_cast<CallInst>((&*L)->clone());
+                            callInst->setOperand(0, sextInst);
+                            callInst->insertAfter(temp);
+                            temp = callInst;
+                        }
+                        else {
+                            Instruction* cloneInstr = (&*L)->clone();
+                            cloneInstr->insertAfter(temp);
+                            temp = cloneInstr;
+                        }
+
+                        deleteInstrs.push_back(&*L);
+                    }
+                }
+
+                if (!isFirstBB) {
+                    deleteBB = &*bb;
+                }
+
+                isFirstBB = false;
+            }
+            if (F.getBasicBlockList().size() > 1) {
+                deleteBranchInstruction->eraseFromParent();
+                DeleteDeadBlock(&*deleteBB);
+            }
+
             for (auto bb = F.getBasicBlockList().begin(); bb != F.getBasicBlockList().end(); ++bb) {
                 std::unordered_map<std::pair<Value*, Type::TypeID>, std::vector<Value*>, hash_pair> storeMap;
                 std::unordered_map<Value*, std::vector<Value*>> functionMap;
@@ -357,8 +423,6 @@ namespace{
                 // errs()<<"store size: " << storeMap.size() << "\n";
                 // errs()<<"func size: " << storeMap.size() << "\n";
 
-                
-
                 for (auto item: storeMap) {
                     graphs.push_back(create_alignment_graph(item.second));
                 }
@@ -369,8 +433,7 @@ namespace{
 
                 for (int j = 0; j < graphs.size(); ++j) {
                     graphs[j] = insert_monotonic_info(graphs[j]);
-                }
-                
+                }      
             }
 
             errs() << "Original Code" << '\n';

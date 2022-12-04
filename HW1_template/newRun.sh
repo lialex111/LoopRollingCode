@@ -35,11 +35,11 @@ cleanup
 setup
 # Convert source code to bitcode (IR)
 # This approach has an issue with -O2, so we are going to stick with default optimization level (-O0)
-clang -emit-llvm -c ${BENCH} -o ${1}.bc 
+clang -emit-llvm -c ${BENCH} -o ${1}.bc -Xclang -disable-O0-optnone
 # Instrument profiler
 opt -enable-new-pm=0 -pgo-instr-gen -instrprof ${1}.bc -o ${1}.prof.bc
 # Generate binary executable with profiler embedded
-clang -fprofile-instr-generate ${1}.prof.bc -o ${1}.prof
+clang -fprofile-instr-generate ${1}.prof.bc -o ${1}.prof -Xclang -disable-O0-optnone
 # Collect profiling data
 ./${1}.prof ${INPUT}
 # Translate raw profiling data into LLVM data format
@@ -52,7 +52,11 @@ setup
 
 # opt -enable-new-pm=0 -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
 
-opt -enable-new-pm=0 -o ${1}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+#opt -enable-new-pm=0 -o ${1}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+
+# opt -loops -loop-rotate -loop-simplify -loop-unroll -unroll-count=3 -unroll-allow-partial -enable-new-pm=0 -o ${1}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+
+opt -mem2reg -simplifycfg -loops -lcssa -loop-simplify -loop-rotate -loop-unroll -unroll-count=3 -unroll-allow-partial -enable-new-pm=0 -o ${1}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
 
 clang ${1}.fplicm.bc -o ${1}_fplicm
 ./${1}_fplicm > fplicm_output
